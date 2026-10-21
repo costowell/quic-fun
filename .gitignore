@@ -1,3 +1,4 @@
-quic
+server
+client
 *.o
 compile_commands.json
