@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <asm-generic/socket.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,68 +9,100 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define PORT 8080
-
-socklen_t addr_in_size = sizeof(struct sockaddr_in);
-
-void error(const char *msg) {
-  perror(msg);
-  exit(1);
+struct addr *get_addr(struct sockaddr *addr) {
+    switch (addr->sa_family) {
+    case AF_INET:
+        return (struct addr *)(&((struct sockaddr_in *)addr)->sin_addr);
+    case AF_INET6:
+        return (struct addr *)(&((struct sockaddr_in6 *)addr)->sin6_addr);
+    default:
+        fprintf(stderr, "fatal: invalid address family type\n");
+        exit(1);
+    }
 }
 
-int main() {
-  int server_fd;
-  struct sockaddr_in bind_addr;
+void usage(const char *argv0) {
+    fprintf(stderr, "usage: %s 0.0.0.0 8080", argv0);
+}
 
-  // Create socket
-  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    error("Failed to create socket");
-  }
-
-  // Setup bind address
-  memset(&bind_addr, 0, sizeof(struct sockaddr_in));
-  bind_addr.sin_family = AF_INET;
-  bind_addr.sin_addr.s_addr = INADDR_ANY;
-  bind_addr.sin_port = htons(PORT);
-
-  // Allow address reuse
-  int opt = 1;
-  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-  // Bind to bind address
-  if ((bind(server_fd, (const struct sockaddr *)&bind_addr, addr_in_size)) <
-      0) {
-    error("Failed to bind");
-  }
-
-  // Start listening for connections on the socket
-  if ((listen(server_fd, 3)) < 0) {
-    error("Failed to listen for new connections");
-  }
-
-  printf("Started listening on %s:%d\n", inet_ntoa(bind_addr.sin_addr), PORT);
-
-  char buf[2048] = {0};
-  struct sockaddr_in incoming_addr;
-  memset(&incoming_addr, 0, sizeof(struct sockaddr_in));
-  int incoming_fd;
-  const char *msg = "HELLO!\n";
-  while (1) {
-    if ((incoming_fd = accept(server_fd, (struct sockaddr *)&incoming_addr,
-                              &addr_in_size) < 0)) {
-      close(server_fd);
-      error("Failed to accept incoming connection");
+int main(int argc, const char *argv[]) {
+    if (argc != 3) {
+        usage(argv[0]);
     }
-    printf("Incoming req from %s\n", inet_ntoa(incoming_addr.sin_addr));
-    if (read(incoming_fd, buf, 2) < 0) {
-      close(server_fd);
-      error("Failed to read from socket");
+
+    const char *addr = argv[1];
+    const char *port = argv[2];
+
+    int sockfd;
+    struct addrinfo *servinfo, *p;
+    struct addrinfo hints = {.ai_socktype = SOCK_STREAM, 0};
+
+    // Resolve the addr into some addresses
+    if ((getaddrinfo(addr, port, &hints, &servinfo)) < 0) {
+        perror("failed to get addr info");
+        return -1;
     }
-    printf("Data:\n%s\n", buf);
-    if (send(incoming_fd, msg, strlen(msg), 0) < 0) {
-      close(server_fd);
-      error("Failed to send response");
+
+    for (p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+            perror("failed to create socket");
+            continue;
+        }
+        int yes = 1;
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
+            perror("failed to set socket option");
+            close(sockfd);
+            continue;
+        }
+        if (bind(sockfd, p->ai_addr, p->ai_addrlen) < 0) {
+            perror("failed to bind");
+            close(sockfd);
+            continue;
+        }
+        break;
     }
-    close(incoming_fd);
-  }
+
+    freeaddrinfo(servinfo);
+
+    if (p == NULL) {
+        fprintf(stderr, "failed to bind on any address\n");
+        return -1;
+    }
+
+    if (listen(sockfd, 5) < 0) {
+        perror("failed to listen");
+        close(sockfd);
+        return -1;
+    }
+
+    while (1) {
+        int clientfd;
+        struct sockaddr_storage client_addr;
+        socklen_t client_addr_size = sizeof(client_addr);
+        char s[INET6_ADDRSTRLEN];
+        if ((clientfd = accept(sockfd, (struct sockaddr *)&client_addr, &client_addr_size)) < 0) {
+            perror("failed to accept");
+            continue;
+        }
+        inet_ntop(client_addr.ss_family, get_addr((struct sockaddr *)&client_addr), s,
+                  INET6_ADDRSTRLEN);
+        printf("connection from %s\n", s);
+
+        char buf[100];
+        ssize_t n;
+        if ((n = recv(clientfd, buf, sizeof(buf), 0)) < 0) {
+            perror("failed to recv from peer");
+            close(clientfd);
+            continue;
+        }
+        buf[n] = '\0';
+        printf("From %s: %s\n", s, buf);
+
+        if (send(clientfd, "lol\n", 4, 0) < 0) {
+            perror("failed to send to peer");
+            close(clientfd);
+            continue;
+        }
+        close(clientfd);
+    }
 }
