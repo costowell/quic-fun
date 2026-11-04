@@ -85,9 +85,9 @@ int main(int argc, const char *argv[]) {
         }
         inet_ntop(client_addr.ss_family, get_addr((struct sockaddr *)&client_addr), s,
                   INET6_ADDRSTRLEN);
-        printf("connection from %s\n", s);
+        printf("[server] connection from %s\n", s);
 
-        char buf[100];
+        char buf[1024];
         ssize_t n;
         if ((n = recv(clientfd, buf, sizeof(buf), 0)) < 0) {
             perror("failed to recv from peer");
@@ -95,9 +95,11 @@ int main(int argc, const char *argv[]) {
             continue;
         }
         buf[n] = '\0';
-        printf("From %s: %s\n", s, buf);
+        printf("[server] from %s:\n%s\n", s, buf);
 
-        if (send(clientfd, "lol\n", 4, 0) < 0) {
+        // Echo it back
+        printf("[server] echoing it back!\n");
+        if (send(clientfd, buf, (size_t)n, 0) < 0) {
             perror("failed to send to peer");
             close(clientfd);
             continue;
