@@ -8,8 +8,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-const char *payload = "GET / HTTP/1.1\r\nUser-Agent: beepboop/1.1.1\r\nHost: example.com\r\n\r\n";
-
 void usage(char *argv0) {
     fprintf(stderr, "usage: %s example.com 8080", argv0);
 }
@@ -40,12 +38,22 @@ int request_sockaddr(struct sockaddr *addr, socklen_t addrlen, char *buf, size_t
         close(sockfd);
         return -2;
     }
-    // Send init message
-    if ((n = send(sockfd, payload, strlen(payload), 0)) < 0) {
+    printf("Connected successfully!\n");
+
+    // Send payload if specified
+    char payload[1024];
+    size_t total_read = 0;
+    while (fgets(payload + total_read, sizeof(payload) - total_read, stdin) != NULL) {
+        size_t len = strcspn(payload + total_read, "\n") + 1;
+        total_read += len;
+    }
+    if ((n = send(sockfd, payload, total_read, 0)) < 0) {
         perror("failed to send from socket");
         close(sockfd);
         return -3;
     }
+    printf("Sent %ld bytes\n", n);
+
     // Read from addr
     if ((n = recv(sockfd, buf, buflen - 1, 0)) < 0) {
         perror("failed to read from socket");
